@@ -338,12 +338,40 @@ void output_bodies(astra_bodyframe_t bodyFrame)
 
         PublishMarker(
           2, // ID
-          //0.4,0.0,0.4,  // x,y,z
-
           centerOfMass->z / 1000.0, // Distance to person = ROS X
           centerOfMass->x / 1000.0, // side to side = ROS Y
-          centerOfMass->y / -1000.0, // Height = ROS Z
+          centerOfMass->y / 1000.0, // Height = ROS Z
+          1.0, 0.0, 1.0 ); // r,g,b
+
+        PublishMarker(
+          3, // ID
+          body_info.joint_position_head.z / 1000.0,
+          body_info.joint_position_head.x / 1000.0,
+          body_info.joint_position_head.y / 1000.0,
+          0.7, 0.7, 0.7 ); // r,g,b
+
+        PublishMarker(
+          4, // ID
+          body_info.joint_position_spine_top.z / 1000.0,
+          body_info.joint_position_spine_top.x / 1000.0,
+          body_info.joint_position_spine_top.y / 1000.0,
+          0.0, 0.0, 1.0 ); // r,g,b
+
+        PublishMarker(
+          5, // ID
+          body_info.joint_position_spine_mid.z / 1000.0,
+          body_info.joint_position_spine_mid.x / 1000.0,
+          body_info.joint_position_spine_mid.y / 1000.0,
           0.0, 1.0, 0.0 ); // r,g,b
+
+        PublishMarker(
+          6, // ID
+          body_info.joint_position_spine_bottom.z / 1000.0,
+          body_info.joint_position_spine_bottom.x / 1000.0,
+          body_info.joint_position_spine_bottom.y / 1000.0,
+          1.0, 0.0, 0.0 ); // r,g,b
+
+
 /*
           printf ("DBG SPINE AT  %f, %f, %f\n",
           body_info.joint_position_spine_top.x,
@@ -362,8 +390,8 @@ void PublishMarker(int id, float x, float y, float z, float color_r, float color
   // For Markers info, see http://wiki.ros.org/rviz/Tutorials/Markers%3A%20Basic%20Shapes
 
   // ROS_INFO("DBG: PublishMarker called");
-  if( id != 1)
-    printf ("DBG PublishMarker called for %f, %f, %f\n", x,y,z);
+  //if( id != 1)
+  //  printf ("DBG PublishMarker called for %f, %f, %f\n", x,y,z);
 
   visualization_msgs::Marker marker;
   marker.header.frame_id = "astra_camera_link"; // "base_link";
@@ -455,11 +483,12 @@ void runLoop()
             astra_reader_close_frame(&frame);
         }
 
+/*
         PublishMarker(  // DEBUG
           1,            // ID
           0.2,0.0,0.8,  // x,y,z
           1.0, 0.0, 1.0 ); // r,g,b
-
+*/
         ros::spinOnce();  // ROS
 
     } while (shouldContinue);
