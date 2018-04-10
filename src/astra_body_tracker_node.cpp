@@ -5,6 +5,7 @@
 #include "std_msgs/Int32.h"
 #include <sstream>
 #include "ros/console.h"
+#include <visualization_msgs/Marker.h>
 
 //For Orbbec Astra SDK
 #include <astra/capi/astra.h>
@@ -34,8 +35,9 @@ public:
 
     // PUBLISHERS
     body_tracking_data_pub_ = nh_.advertise<astra_body_tracker::BodyInfo>("astra_body_tracker/data", 1);
+  marker_pub_ = nh_.advertise<visualization_msgs::Marker>("astra_body_tracker/marker", 1);
 
-    ROS_INFO("astra_body_tracker: Advertised Publisher: astra_body_tracker/data");
+    ROS_INFO("astra_body_tracker: Advertised Publisher: astra_body_tracker/data, marker");
 
   }
 
@@ -333,10 +335,73 @@ void output_bodies(astra_bodyframe_t bodyFrame)
         // Publish Body Data
         body_tracking_data_pub_.publish(body_info);
 
+
+        PublishMarker(
+          2, // ID
+          //0.4,0.0,0.4,  // x,y,z
+
+          centerOfMass->z / 1000.0, // Distance to person = ROS X
+          centerOfMass->x / 1000.0, // side to side = ROS Y
+          centerOfMass->y / -1000.0, // Height = ROS Z
+          0.0, 1.0, 0.0 ); // r,g,b
+/*
+          printf ("DBG SPINE AT  %f, %f, %f\n",
+          body_info.joint_position_spine_top.x,
+          body_info.joint_position_spine_top.y,
+          body_info.joint_position_spine_top.z);
+*/
+
         printf("\n----------------------------\n\n");
 
     }
 }
+
+void PublishMarker(int id, float x, float y, float z, float color_r, float color_g, float color_b)
+{
+  // Display marker for RVIZ to show where robot thinks person is
+  // For Markers info, see http://wiki.ros.org/rviz/Tutorials/Markers%3A%20Basic%20Shapes
+
+  // ROS_INFO("DBG: PublishMarker called");
+  if( id != 1)
+    printf ("DBG PublishMarker called for %f, %f, %f\n", x,y,z);
+
+  visualization_msgs::Marker marker;
+  marker.header.frame_id = "astra_camera_link"; // "base_link";
+  marker.header.stamp = ros::Time::now();
+
+  // Any marker sent with the same namespace and id will overwrite the old one
+  marker.ns = "astra_body_tracker";
+  marker.id = id; // This must be id unique for each marker
+
+  uint32_t shape = visualization_msgs::Marker::SPHERE;
+  marker.type = shape;
+
+  // Set the marker action.  Options are ADD, DELETE, and new in ROS Indigo: 3 (DELETEALL)
+  marker.action = visualization_msgs::Marker::ADD;
+  marker.color.r = color_r;
+  marker.color.g = color_g; 
+  marker.color.b = color_b;
+  marker.color.a = 1.0;
+  marker.pose.orientation.x = 0.0;
+  marker.pose.orientation.y = 0.0;
+  marker.pose.orientation.z = 0.0;
+  marker.pose.orientation.w = 1.0;
+
+  marker.scale.x = 0.1; // size of marker in meters
+  marker.scale.y = 0.1;
+  marker.scale.z = 0.1;  
+
+  marker.pose.position.x = x;
+  marker.pose.position.y = y;
+  marker.pose.position.z = z;
+
+
+  //ROS_INFO("DBG: Publishing Marker");
+  marker_pub_.publish(marker);
+
+}
+
+
 
 void output_bodyframe(astra_bodyframe_t bodyFrame)
 {
@@ -390,6 +455,11 @@ void runLoop()
             astra_reader_close_frame(&frame);
         }
 
+        PublishMarker(  // DEBUG
+          1,            // ID
+          0.2,0.0,0.8,  // x,y,z
+          1.0, 0.0, 1.0 ); // r,g,b
+
         ros::spinOnce();  // ROS
 
     } while (shouldContinue);
@@ -413,6 +483,7 @@ private:
 
   //ros::Publisher body_tracking_status_pub_;
   ros::Publisher body_tracking_data_pub_;
+  ros::Publisher marker_pub_;
 
 };
 
