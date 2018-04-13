@@ -5,7 +5,7 @@
 #include "std_msgs/Int32.h"
 #include <sstream>
 #include "ros/console.h"
-#include <visualization_msgs/Marker.h>
+#include "geometry_msgs/PoseStamped.h"
 
 //For Orbbec Astra SDK
 #include <astra/capi/astra.h>
@@ -15,6 +15,7 @@
 #include <key_handler.h>
 
 #include <astra_body_tracker/BodyInfo.h>  // Publish custom message
+#include <visualization_msgs/Marker.h>
 
 using namespace astra_body_tracker;
 
@@ -34,6 +35,8 @@ public:
     //robot_behavior_state_ = nh_.subscribe("/behavior/cmd", 1, &behavior_logic_node::behaviorStateCB, this);
 
     // PUBLISHERS
+    body_tracking_pose_pub_ = nh_.advertise<geometry_msgs::PoseStamped>("astra_body_tracker/pose", 1); // NOTE: We only provide to POSITION not full pose
+
     body_tracking_data_pub_ = nh_.advertise<astra_body_tracker::BodyInfo>("astra_body_tracker/data", 1);
   marker_pub_ = nh_.advertise<visualization_msgs::Marker>("astra_body_tracker/marker", 1);
 
@@ -249,82 +252,100 @@ void output_bodies(astra_bodyframe_t bodyFrame)
         ///////////////////////////////////////////////////////////////
         // Publish body tracking information, and display joint info for debug
 
-        // Create structure for ROS Publisher data
+        // Create structures for ROS Publisher data
+        geometry_msgs::PoseStamped body_pose;
         astra_body_tracker::BodyInfo_ <astra_body_tracker::BodyInfo> body_info;
 
-        // Fill in ROS body_info structure from AstraSDK data
+        // Fill in message data from AstraSDK data
+        // Astra z,x,y coordinates are mapped to ROS x,y,z coordinates 
+        // All values are relative to camera position in meters (ie, in Astra Camera TF frame)
+        // ROS x = Astra z - distance to person
+        // ROS y = Astra x - side to side
+        // ROS z = Astra y - vertical height, *relative to camera position*
+
+        // Basic Pose for person location tracking
+        body_pose.header.frame_id = "astra_camera_link"; // "base_link";
+        body_pose.header.stamp = ros::Time::now();
+
+        // Skeleton Data for publilshing more detail
+
+        // body_info.frame_id = "astra_camera_link"; // "base_link";
         body_info.body_id = bodyId;
         body_info.tracking_status = bodyStatus;
 
-        body_info.centerOfMass.x = centerOfMass->x;
-        body_info.centerOfMass.y = centerOfMass->y;
-        body_info.centerOfMass.z = centerOfMass->z;
+        body_info.centerOfMass.x = centerOfMass->z;
+        body_info.centerOfMass.y = centerOfMass->x;
+        body_info.centerOfMass.z = centerOfMass->y;
 
         joint = &body->joints[ASTRA_JOINT_HEAD];
         output_joint("Head", bodyId, joint );
-        body_info.joint_position_head.x = ((astra_vector3f_t*)&joint->worldPosition)->x;
-        body_info.joint_position_head.y = ((astra_vector3f_t*)&joint->worldPosition)->y;
-        body_info.joint_position_head.z = ((astra_vector3f_t*)&joint->worldPosition)->z;
+        body_info.joint_position_head.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
+        body_info.joint_position_head.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
+        body_info.joint_position_head.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
 
         joint = &body->joints[ASTRA_JOINT_NECK];
         output_joint("Neck", bodyId, joint );
-        body_info.joint_position_neck.x = ((astra_vector3f_t*)&joint->worldPosition)->x;
-        body_info.joint_position_neck.y = ((astra_vector3f_t*)&joint->worldPosition)->y;
-        body_info.joint_position_neck.z = ((astra_vector3f_t*)&joint->worldPosition)->z;
+        body_info.joint_position_neck.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
+        body_info.joint_position_neck.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
+        body_info.joint_position_neck.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
 
         joint = &body->joints[ASTRA_JOINT_SHOULDER_SPINE];
         output_joint("Spine Top", bodyId, joint );
-        body_info.joint_position_spine_top.x = ((astra_vector3f_t*)&joint->worldPosition)->x;
-        body_info.joint_position_spine_top.y = ((astra_vector3f_t*)&joint->worldPosition)->y;
-        body_info.joint_position_spine_top.z = ((astra_vector3f_t*)&joint->worldPosition)->z;
+        body_info.joint_position_spine_top.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
+        body_info.joint_position_spine_top.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
+        body_info.joint_position_spine_top.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
+        // THIS IS THE MOST RELIABLE TRACKING POINT, so we use it for Pose!
+        body_pose.pose.position.x = body_info.joint_position_spine_top.x;
+        body_pose.pose.position.y = body_info.joint_position_spine_top.y;
+        body_pose.pose.position.z = body_info.joint_position_spine_top.z;
 
         joint = &body->joints[ASTRA_JOINT_MID_SPINE];
         output_joint("Spine Mid", bodyId, joint );
-        body_info.joint_position_spine_mid.x = ((astra_vector3f_t*)&joint->worldPosition)->x;
-        body_info.joint_position_spine_mid.y = ((astra_vector3f_t*)&joint->worldPosition)->y;
-        body_info.joint_position_spine_mid.z = ((astra_vector3f_t*)&joint->worldPosition)->z;
+        body_info.joint_position_spine_mid.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
+        body_info.joint_position_spine_mid.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
+        body_info.joint_position_spine_mid.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
 
         joint = &body->joints[ASTRA_JOINT_BASE_SPINE];
         output_joint("Spine Base", bodyId, joint );
-        body_info.joint_position_spine_bottom.x = ((astra_vector3f_t*)&joint->worldPosition)->x;
-        body_info.joint_position_spine_bottom.y = ((astra_vector3f_t*)&joint->worldPosition)->y;
-        body_info.joint_position_spine_bottom.z = ((astra_vector3f_t*)&joint->worldPosition)->z;
+        body_info.joint_position_spine_bottom.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
+        body_info.joint_position_spine_bottom.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
+        body_info.joint_position_spine_bottom.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
 
         joint = &body->joints[ASTRA_JOINT_LEFT_SHOULDER];
         output_joint("Left Shoulder", bodyId, joint );
-        body_info.joint_position_left_shoulder.x = ((astra_vector3f_t*)&joint->worldPosition)->x;
-        body_info.joint_position_left_shoulder.y = ((astra_vector3f_t*)&joint->worldPosition)->y;
-        body_info.joint_position_left_shoulder.z = ((astra_vector3f_t*)&joint->worldPosition)->z;
+        body_info.joint_position_left_shoulder.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
+        body_info.joint_position_left_shoulder.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
+        body_info.joint_position_left_shoulder.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
 
         joint = &body->joints[ASTRA_JOINT_LEFT_ELBOW];
         output_joint("Left Elbow", bodyId, joint );
-        body_info.joint_position_left_elbow.x = ((astra_vector3f_t*)&joint->worldPosition)->x;
-        body_info.joint_position_left_elbow.y = ((astra_vector3f_t*)&joint->worldPosition)->y;
-        body_info.joint_position_left_elbow.z = ((astra_vector3f_t*)&joint->worldPosition)->z;
+        body_info.joint_position_left_elbow.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
+        body_info.joint_position_left_elbow.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
+        body_info.joint_position_left_elbow.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
 
         joint = &body->joints[ASTRA_JOINT_LEFT_HAND];
         output_joint("Left Hand", bodyId, joint );
-        body_info.joint_position_left_hand.x = ((astra_vector3f_t*)&joint->worldPosition)->x;
-        body_info.joint_position_left_hand.y = ((astra_vector3f_t*)&joint->worldPosition)->y;
-        body_info.joint_position_left_hand.z = ((astra_vector3f_t*)&joint->worldPosition)->z;
+        body_info.joint_position_left_hand.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
+        body_info.joint_position_left_hand.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
+        body_info.joint_position_left_hand.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
 
         joint = &body->joints[ASTRA_JOINT_LEFT_SHOULDER];
         output_joint("Right Shoulder", bodyId, joint );
-        body_info.joint_position_right_shoulder.x = ((astra_vector3f_t*)&joint->worldPosition)->x;
-        body_info.joint_position_right_shoulder.y = ((astra_vector3f_t*)&joint->worldPosition)->y;
-        body_info.joint_position_right_shoulder.z = ((astra_vector3f_t*)&joint->worldPosition)->z;
+        body_info.joint_position_right_shoulder.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
+        body_info.joint_position_right_shoulder.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
+        body_info.joint_position_right_shoulder.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
 
         joint = &body->joints[ASTRA_JOINT_LEFT_ELBOW];
         output_joint("Right Elbow", bodyId, joint );
-        body_info.joint_position_right_elbow.x = ((astra_vector3f_t*)&joint->worldPosition)->x;
-        body_info.joint_position_right_elbow.y = ((astra_vector3f_t*)&joint->worldPosition)->y;
-        body_info.joint_position_right_elbow.z = ((astra_vector3f_t*)&joint->worldPosition)->z;
+        body_info.joint_position_right_elbow.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
+        body_info.joint_position_right_elbow.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
+        body_info.joint_position_right_elbow.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
 
         joint = &body->joints[ASTRA_JOINT_LEFT_HAND];
         output_joint("Right Hand", bodyId, joint );
-        body_info.joint_position_right_hand.x = ((astra_vector3f_t*)&joint->worldPosition)->x;
-        body_info.joint_position_right_hand.y = ((astra_vector3f_t*)&joint->worldPosition)->y;
-        body_info.joint_position_right_hand.z = ((astra_vector3f_t*)&joint->worldPosition)->z;
+        body_info.joint_position_right_hand.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
+        body_info.joint_position_right_hand.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
+        body_info.joint_position_right_hand.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
 
         // Is hand open (0) or grasping (1)?
         output_hand_poses(body);
@@ -332,54 +353,55 @@ void output_bodies(astra_bodyframe_t bodyFrame)
         body_info.left_hand_closed = handPoses->leftHand;
         body_info.right_hand_closed = handPoses->rightHand;
 
+        ////////////////////////////////////////////////////
         // Publish Body Data
+        body_tracking_pose_pub_.publish(body_pose); // this is position only!
         body_tracking_data_pub_.publish(body_info);
+        ////////////////////////////////////////////////////
+
 
 
         PublishMarker(
           2, // ID
-          centerOfMass->z / 1000.0, // Distance to person = ROS X
-          centerOfMass->x / 1000.0, // side to side = ROS Y
-          centerOfMass->y / 1000.0, // Height = ROS Z
+          body_info.centerOfMass.x, // Distance to person = ROS X
+          body_info.centerOfMass.y, // side to side = ROS Y
+          body_info.centerOfMass.z, // Height = ROS Z
           1.0, 0.0, 1.0 ); // r,g,b
 
         PublishMarker(
           3, // ID
-          body_info.joint_position_head.z / 1000.0,
-          body_info.joint_position_head.x / 1000.0,
-          body_info.joint_position_head.y / 1000.0,
+          body_info.joint_position_head.x,
+          body_info.joint_position_head.y,
+          body_info.joint_position_head.z,
           0.7, 0.7, 0.7 ); // r,g,b
 
         PublishMarker(
           4, // ID
-          body_info.joint_position_spine_top.z / 1000.0,
-          body_info.joint_position_spine_top.x / 1000.0,
-          body_info.joint_position_spine_top.y / 1000.0,
+          body_info.joint_position_spine_top.x,
+          body_info.joint_position_spine_top.y,
+          body_info.joint_position_spine_top.z,
           0.0, 0.0, 1.0 ); // r,g,b
 
         PublishMarker(
           5, // ID
-          body_info.joint_position_spine_mid.z / 1000.0,
-          body_info.joint_position_spine_mid.x / 1000.0,
-          body_info.joint_position_spine_mid.y / 1000.0,
+          body_info.joint_position_spine_mid.x,
+          body_info.joint_position_spine_mid.y,
+          body_info.joint_position_spine_mid.z,
           0.0, 1.0, 0.0 ); // r,g,b
 
         PublishMarker(
           6, // ID
-          body_info.joint_position_spine_bottom.z / 1000.0,
-          body_info.joint_position_spine_bottom.x / 1000.0,
-          body_info.joint_position_spine_bottom.y / 1000.0,
+          body_info.joint_position_spine_bottom.x,
+          body_info.joint_position_spine_bottom.y,
+          body_info.joint_position_spine_bottom.z,
           1.0, 0.0, 0.0 ); // r,g,b
 
+        printf("SPINE TOP: x=%3.0f, y=%3.0f, z=%3.0f inches\n",
+          body_info.joint_position_spine_top.x * 39.3,
+          body_info.joint_position_spine_top.y * 39.3,
+          body_info.joint_position_spine_top.z * 39.3);
 
-/*
-          printf ("DBG SPINE AT  %f, %f, %f\n",
-          body_info.joint_position_spine_top.x,
-          body_info.joint_position_spine_top.y,
-          body_info.joint_position_spine_top.z);
-*/
-
-        printf("\n----------------------------\n\n");
+        printf("----------------------------\n\n");
 
     }
 }
@@ -511,6 +533,7 @@ private:
   std::string myparm1_;
 
   //ros::Publisher body_tracking_status_pub_;
+  ros::Publisher body_tracking_pose_pub_;
   ros::Publisher body_tracking_data_pub_;
   ros::Publisher marker_pub_;
 
