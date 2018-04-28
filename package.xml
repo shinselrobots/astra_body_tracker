@@ -3,7 +3,7 @@
   <name>astra_body_tracker</name>
   <version>0.0.0</version>
   <description>a body_tracker package for Orbbec Astra SDK</description>
-  <maintainer email="system@todo.todo">system</maintainer>
+  <maintainer email="shinsel.robots@gmail.com">Dave Shinsel</maintainer>
   <license>TODO</license>
   <!-- <author email="jane.doe@example.com">Jane Doe</author> -->
 
