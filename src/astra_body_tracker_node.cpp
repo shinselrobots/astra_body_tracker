@@ -35,15 +35,15 @@ public:
 
     // PUBLISHERS
     body_tracking_pose_pub_ = nh_.advertise<geometry_msgs::PoseStamped>
-      ("astra_body_tracker/pose", 1); // NOTE: We only provide to POSITION not full pose
+      ("body_tracker/pose", 1); // NOTE: We only provide to POSITION not full pose
 
     body_tracking_data_pub_ = nh_.advertise<body_tracker_msgs::BodyTracker>
-      ("astra_body_tracker/skeleton", 1);
+      ("body_tracker/skeleton", 1);
 
     marker_pub_ = nh_.advertise<visualization_msgs::Marker>
-      ("astra_body_tracker/marker", 1);
+      ("body_tracker/marker", 1);
 
-    ROS_INFO("astra_body_tracker: Advertised Publisher: astra_body_tracker/pose, skeleton, marker");
+    ROS_INFO("astra_body_tracker: Advertised Publisher: body_tracker/pose, skeleton, marker");
 
   }
 
