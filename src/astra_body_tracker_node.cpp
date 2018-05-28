@@ -1,4 +1,28 @@
 /* Body Tracker Node 
+   Publish data as 3 messages:
+   
+   Publish data messages:
+   
+   1. body_tracking_position_pub_ custom message:  <body_tracker_msgs::BodyTracker>
+   Includes:
+   2D position of person relative to head camera; allows for fast, smooth tracking
+     when camera is mounted on pan/tilt servos.
+     (x, y from 0.0 to 1.0, z is real)
+     Astra Mini FOV: 60 horz, 49.5 vert (degrees)
+
+   3D position of the neck joint in relation to robot (using TF)
+     Joint.real: position in real world coordinates
+     Useful for tracking person in 3D
+   
+   2. body_tracking_skeleton_pub_ custom message: <body_tracker_msgs::Skeleton>
+   Includes:
+   Everyting in BodyTracker message above, plus 3D position of upper body. 
+     joints in relation to robot (using TF)
+     Joint.real: position in real world coordinates
+
+   3. marker_pub_  message: <visualization_msgs::Marker>
+   Publishes 3d markers for selected joints.  Visible as markers in RVIZ
+
 */
 #include "ros/ros.h"
 #include "std_msgs/String.h"
@@ -14,9 +38,13 @@
 #include <stdbool.h>
 #include <key_handler.h>
 
-// #include <astra_body_tracker/BodyInfo.h>  // Publish custom message
 #include "body_tracker_msgs/BodyTracker.h"  // Publish custom message
+#include "body_tracker_msgs/Skeleton.h"     // Publish custom message
+
 #include <visualization_msgs/Marker.h>
+
+#define KEY_JOINT_TO_TRACK    ASTRA_JOINT_SHOULDER_SPINE 
+//#define M_PI                  3.1415926535897931
 
 class astra_body_tracker_node 
 {
@@ -26,6 +54,7 @@ public:
   {
     ROS_INFO("%s: Initializing", _name.c_str());
     bool initialized = false;
+    last_id_ = -1;
 
     ros::NodeHandle nodeHandle("~");
     nodeHandle.param<std::string>("myparm1",myparm1_,"mydefault");
@@ -34,15 +63,26 @@ public:
     //robot_behavior_state_ = nh_.subscribe("/behavior/cmd", 1, &behavior_logic_node::behaviorStateCB, this);
 
     // PUBLISHERS
-    body_tracking_pose_pub_ = nh_.advertise<geometry_msgs::PoseStamped>
+    // Publish tracked person in 2D and 3D
+    // 2D: x,y in camera frame.   3D: x,y,z in world coordinates
+    body_tracking_position_pub_ = nh_.advertise<body_tracker_msgs::BodyTracker>
+      ("body_tracker/position", 1); 
+
+    // Publish tracked person upper body skeleton for advanced uses
+    body_tracking_skeleton_pub_ = nh_.advertise<body_tracker_msgs::Skeleton>
+      ("body_tracker/skeleton", 1);
+
+    // Publish markers to show where robot thinks person is in RViz
+    marker_pub_ = nh_.advertise<visualization_msgs::Marker>
+      ("body_tracker/marker", 1);
+
+
+/*    body_tracking_pose_pub_ = nh_.advertise<geometry_msgs::PoseStamped>
       ("body_tracker/pose", 1); // NOTE: We only provide to POSITION not full pose
 
     body_tracking_data_pub_ = nh_.advertise<body_tracker_msgs::BodyTracker>
       ("body_tracker/skeleton", 1);
-
-    marker_pub_ = nh_.advertise<visualization_msgs::Marker>
-      ("body_tracker/marker", 1);
-
+*/
     ROS_INFO("astra_body_tracker: Advertised Publisher: body_tracker/pose, skeleton, marker");
 
   }
@@ -59,76 +99,76 @@ public:
 
   void output_floor(astra_bodyframe_t bodyFrame)
   {
-      astra_floor_info_t floorInfo;
+    astra_floor_info_t floorInfo;
 
-      astra_status_t rc = astra_bodyframe_floor_info(bodyFrame, &floorInfo);
-      if (rc != ASTRA_STATUS_SUCCESS)
-      {
-          printf("Error %d in astra_bodyframe_floor_info()\n", rc);
-          return;
-      }
+    astra_status_t rc = astra_bodyframe_floor_info(bodyFrame, &floorInfo);
+    if (rc != ASTRA_STATUS_SUCCESS)
+    {
+      printf("Error %d in astra_bodyframe_floor_info()\n", rc);
+      return;
+    }
 
-      const astra_bool_t floorDetected = floorInfo.floorDetected;
-      const astra_plane_t* floorPlane = &floorInfo.floorPlane;
-      const astra_floormask_t* floorMask = &floorInfo.floorMask;
+    const astra_bool_t floorDetected = floorInfo.floorDetected;
+    const astra_plane_t* floorPlane = &floorInfo.floorPlane;
+    const astra_floormask_t* floorMask = &floorInfo.floorMask;
 
-      if (floorDetected != ASTRA_FALSE)
-      {
-          printf("Floor plane: [%f, %f, %f, %f]\n",
-                 floorPlane->a,
-                 floorPlane->b,
-                 floorPlane->c,
-                 floorPlane->d);
+    if (floorDetected != ASTRA_FALSE)
+    {
+      printf("Floor plane: [%f, %f, %f, %f]\n",
+             floorPlane->a,
+             floorPlane->b,
+             floorPlane->c,
+             floorPlane->d);
 
-          const int32_t bottomCenterIndex = floorMask->width / 2 + floorMask->width * (floorMask->height - 1);
-          printf("Floor mask: width: %d height: %d bottom center value: %d\n",
-              floorMask->width,
-              floorMask->height,
-              floorMask->data[bottomCenterIndex]);
-      }
+      const int32_t bottomCenterIndex = floorMask->width / 2 + floorMask->width * (floorMask->height - 1);
+      printf("Floor mask: width: %d height: %d bottom center value: %d\n",
+            floorMask->width,
+            floorMask->height,
+            floorMask->data[bottomCenterIndex]);
+    }
   }
 
   void output_body_mask(astra_bodyframe_t bodyFrame)
   {
-      astra_bodymask_t bodyMask;
+    astra_bodymask_t bodyMask;
 
-      const astra_status_t rc = astra_bodyframe_bodymask(bodyFrame, &bodyMask);
-      if (rc != ASTRA_STATUS_SUCCESS)
-      {
-          printf("Error %d in astra_bodyframe_bodymask()\n", rc);
-          return;
-      }
+    const astra_status_t rc = astra_bodyframe_bodymask(bodyFrame, &bodyMask);
+    if (rc != ASTRA_STATUS_SUCCESS)
+    {
+      printf("Error %d in astra_bodyframe_bodymask()\n", rc);
+      return;
+    }
 
-      /*
-      const int32_t centerIndex = bodyMask.width / 2 + bodyMask.width * bodyMask.height / 2;
-      printf("Body mask: width: %d height: %d center value: %d\n",
-          bodyMask.width,
-          bodyMask.height,
-          bodyMask.data[centerIndex]);
-      */
+    /*
+    const int32_t centerIndex = bodyMask.width / 2 + bodyMask.width * bodyMask.height / 2;
+    printf("Body mask: width: %d height: %d center value: %d\n",
+        bodyMask.width,
+        bodyMask.height,
+        bodyMask.data[centerIndex]);
+    */
   }
 
   void output_bodyframe_info(astra_bodyframe_t bodyFrame)
   {
-      astra_bodyframe_info_t info;
+    astra_bodyframe_info_t info;
 
-      const astra_status_t rc = astra_bodyframe_info(bodyFrame, &info);
-      if (rc != ASTRA_STATUS_SUCCESS)
-      {
-          printf("Error %d in astra_bodyframe_info()\n", rc);
-          return;
-      }
+    const astra_status_t rc = astra_bodyframe_info(bodyFrame, &info);
+    if (rc != ASTRA_STATUS_SUCCESS)
+    {
+      printf("Error %d in astra_bodyframe_info()\n", rc);
+      return;
+    }
 
-      // width and height of floor mask, body mask, and the size of depth image
-      // that joint depth position is relative to.
-      const int32_t width = info.width;
-      const int32_t height = info.height;
+    // width and height of floor mask, body mask, and the size of depth image
+    // that joint depth position is relative to.
+    const int32_t width = info.width;
+    const int32_t height = info.height;
 
-      /*
-      printf("BodyFrame info: Width: %d Height: %d\n",
-          width,
-          height);
-      */
+    /*
+    printf("BodyFrame info: Width: %d Height: %d\n",
+        width,
+        height);
+   */
   }
 
 
@@ -136,277 +176,335 @@ public:
   void output_joint(std::string joint_name, const int32_t bodyId, const astra_joint_t* joint)
   {
 
-      printf("%14s:", joint_name.c_str());
+    printf("%14s:", joint_name.c_str());
 
-      // jointType is one of ASTRA_JOINT_* which exists for each joint type
-      const astra_joint_type_t jointType = joint->type;
+    // jointType is one of ASTRA_JOINT_* which exists for each joint type
+    const astra_joint_type_t jointType = joint->type;
 
-      // jointStatus is one of:
-      // ASTRA_JOINT_STATUS_NOT_TRACKED = 0,
-      // ASTRA_JOINT_STATUS_LOW_CONFIDENCE = 1,
-      // ASTRA_JOINT_STATUS_TRACKED = 2,
-      const astra_joint_status_t jointStatus = joint->status;
+    // jointStatus is one of:
+    // ASTRA_JOINT_STATUS_NOT_TRACKED = 0,
+    // ASTRA_JOINT_STATUS_LOW_CONFIDENCE = 1,
+    // ASTRA_JOINT_STATUS_TRACKED = 2,
+    const astra_joint_status_t jointStatus = joint->status;
 
-      const astra_vector3f_t* worldPos = &joint->worldPosition;
+    const astra_vector3f_t* worldPos = &joint->worldPosition;
 
-      // depthPosition is in pixels from 0 to width and 0 to height
-      // where width and height are member of astra_bodyframe_info_t
-      // which is obtained from astra_bodyframe_info().
-      const astra_vector2f_t* depthPos = &joint->depthPosition;
+    // depthPosition is in pixels from 0 to width and 0 to height
+    // where width and height are member of astra_bodyframe_info_t
+    // which is obtained from astra_bodyframe_info().
+    const astra_vector2f_t* depthPos = &joint->depthPosition;
 
-      printf("Body %u Joint %d status %d @ world (%.1f, %.1f, %.1f) depth (%.1f, %.1f)\n",
-             bodyId,
-             jointType,
-             jointStatus,
-             worldPos->x,
-             worldPos->y,
-             worldPos->z,
-             depthPos->x,
-             depthPos->y);
+    printf("Body %u Joint %d status %d @ world (%.1f, %.1f, %.1f) depth (%.1f, %.1f)\n",
+           bodyId,
+           jointType,
+           jointStatus,
+           worldPos->x,
+           worldPos->y,
+           worldPos->z,
+           depthPos->x,
+           depthPos->y);
 
-      // orientation is a 3x3 rotation matrix where the column vectors also
-      // represent the orthogonal basis vectors for the x, y, and z axes.
-      /* Not sure I need orientation for anything yet
-      const astra_matrix3x3_t* orientation = &joint->orientation;
-      const astra_vector3f_t* xAxis = &orientation->xAxis; // same as orientation->m00, m10, m20
-      const astra_vector3f_t* yAxis = &orientation->yAxis; // same as orientation->m01, m11, m21
-      const astra_vector3f_t* zAxis = &orientation->zAxis; // same as orientation->m02, m12, m22
+    // orientation is a 3x3 rotation matrix where the column vectors also
+    // represent the orthogonal basis vectors for the x, y, and z axes.
+    /* Not sure I need orientation for anything yet
+    const astra_matrix3x3_t* orientation = &joint->orientation;
+    const astra_vector3f_t* xAxis = &orientation->xAxis; // same as orientation->m00, m10, m20
+    const astra_vector3f_t* yAxis = &orientation->yAxis; // same as orientation->m01, m11, m21
+    const astra_vector3f_t* zAxis = &orientation->zAxis; // same as orientation->m02, m12, m22
 
-      printf("Head orientation x: [%f %f %f]\n", xAxis->x, xAxis->y, xAxis->z);
-      printf("Head orientation y: [%f %f %f]\n", yAxis->x, yAxis->y, yAxis->z);
-      printf("Head orientation z: [%f %f %f]\n", zAxis->x, zAxis->y, zAxis->z);
-      */
+    printf("Head orientation x: [%f %f %f]\n", xAxis->x, xAxis->y, xAxis->z);
+    printf("Head orientation y: [%f %f %f]\n", yAxis->x, yAxis->y, yAxis->z);
+    printf("Head orientation z: [%f %f %f]\n", zAxis->x, zAxis->y, zAxis->z);
+    */
   }
 
   void output_hand_poses(const astra_body_t* body)
   {
-      const astra_handpose_info_t* handPoses = &body->handPoses;
+    const astra_handpose_info_t* handPoses = &body->handPoses;
 
-      // astra_handpose_t is one of:
-      // ASTRA_HANDPOSE_UNKNOWN = 0
-      // ASTRA_HANDPOSE_GRIP = 1
-      const astra_handpose_t leftHandPose = handPoses->leftHand;
-      const astra_handpose_t rightHandPose = handPoses->rightHand;
+    // astra_handpose_t is one of:
+    // ASTRA_HANDPOSE_UNKNOWN = 0
+    // ASTRA_HANDPOSE_GRIP = 1
+    const astra_handpose_t leftHandPose = handPoses->leftHand;
+    const astra_handpose_t rightHandPose = handPoses->rightHand;
 
-      printf("Body %d Left hand pose: %d Right hand pose: %d\n",
-          body->id,
-          leftHandPose,
-          rightHandPose);
+    printf("Body %d Left hand pose: %d Right hand pose: %d\n",
+        body->id,
+        leftHandPose,
+        rightHandPose);
   }
 
   void output_bodies(astra_bodyframe_t bodyFrame)
   {
-      int i;
-      astra_body_list_t bodyList;
-      const astra_status_t rc = astra_bodyframe_body_list(bodyFrame, &bodyList);
-      if (rc != ASTRA_STATUS_SUCCESS)
+    int i;
+    astra_body_list_t bodyList;
+    const astra_status_t rc = astra_bodyframe_body_list(bodyFrame, &bodyList);
+    if (rc != ASTRA_STATUS_SUCCESS)
+    {
+        printf("Error %d in astra_bodyframe_body_list()\n", rc);
+        return;
+    }
+
+    for(i = 0; i < bodyList.count; ++i)
+    {
+      astra_body_t* body = &bodyList.bodies[i];
+
+      // Pixels in the body mask with the same value as bodyId are
+      // from the same body.
+      int bodyId = (int)body->id; // astra_body_id_t 
+
+      // Tracking status
+      // NOT_TRACKING = 0
+      // TRACKING_LOST = 1
+      // TRACKING_STARTED = 2
+      // TRACKING = 3
+
+      astra_body_status_t bodyStatus = body->status;
+      if (bodyStatus == ASTRA_BODY_STATUS_TRACKING_STARTED)
       {
-          printf("Error %d in astra_bodyframe_body_list()\n", rc);
-          return;
+          printf("Body Id: %d Status: Tracking started\n", bodyId);
+      }
+      else if (bodyStatus == ASTRA_BODY_STATUS_TRACKING)
+      {
+          printf("Body Id: %d Status: Tracking\n", bodyId);
+      }
+      else if (bodyStatus == ASTRA_BODY_STATUS_LOST)
+      {
+          printf("Body %u Status: Tracking lost.\n", bodyId);
+      }
+      else // bodyStatus == ASTRA_BODY_STATUS_NOT_TRACKING
+      {
+          printf("Body Id: %d Status: Not Tracking\n", bodyId);
       }
 
-      for(i = 0; i < bodyList.count; ++i)
+      const astra_vector3f_t* centerOfMass = &body->centerOfMass;
+      const astra_body_tracking_feature_flags_t features = body->features;
+      astra_joint_t* joint;  // AstraSDK/include/astra/capi/streams/body_types.h
+
+      const bool jointTrackingEnabled = 
+        (features & ASTRA_BODY_TRACKING_JOINTS) == ASTRA_BODY_TRACKING_JOINTS;
+      const bool handPoseRecognitionEnabled = 
+        (features & ASTRA_BODY_TRACKING_HAND_POSES) == ASTRA_BODY_TRACKING_HAND_POSES;
+
+      printf("Body %d CenterOfMass (%f, %f, %f)\n",
+          bodyId, centerOfMass->x, centerOfMass->y, centerOfMass->z);
+      printf("    Joint Tracking Enabled: %s     Hand Pose Recognition Enabled: %s\n",
+          jointTrackingEnabled       ? "True" : "False",
+          handPoseRecognitionEnabled ? "True" : "False");
+
+      ///////////////////////////////////////////////////////////////
+      // Publish body tracking information, and display joint info for debug
+
+      // Create structures for ROS Publisher data
+      body_tracker_msgs::BodyTracker_ <body_tracker_msgs::BodyTracker> position_data;
+      body_tracker_msgs::Skeleton_ <body_tracker_msgs::Skeleton> skeleton_data;
+
+      // Fill in message data from AstraSDK data
+      // Astra z,x,y coordinates are mapped to ROS x,y,z coordinates 
+      // All values are relative to camera position in meters (ie, in Astra Camera TF frame)
+      // ROS x = Astra z - distance to person
+      // ROS y = Astra x - side to side
+      // ROS z = Astra y - vertical height, *relative to camera position*
+
+      // Basic Pose for person location tracking
+      ///body_pose.header.frame_id = "astra_camera_link"; // "base_link";
+      ///body_pose.header.stamp = ros::Time::now();
+
+      // Skeleton Data for publilshing more detail
+
+      position_data.body_id = bodyId;
+      position_data.tracking_status = bodyStatus;
+      position_data.gesture = -1; // No gesture yet
+
+      if(bodyId != last_id_)
       {
-          astra_body_t* body = &bodyList.bodies[i];
-
-          // Pixels in the body mask with the same value as bodyId are
-          // from the same body.
-          astra_body_id_t bodyId = body->id;
-
-          // Tracking status
-          // NOT_TRACKING = 0
-          // TRACKING_LOST = 1
-          // TRACKING_STARTED = 2
-          // TRACKING = 3
-
-          astra_body_status_t bodyStatus = body->status;
-          if (bodyStatus == ASTRA_BODY_STATUS_TRACKING_STARTED)
-          {
-              printf("Body Id: %d Status: Tracking started\n", bodyId);
-          }
-          else if (bodyStatus == ASTRA_BODY_STATUS_TRACKING)
-          {
-              printf("Body Id: %d Status: Tracking\n", bodyId);
-          }
-          else if (bodyStatus == ASTRA_BODY_STATUS_LOST)
-          {
-              printf("Body %u Status: Tracking lost.\n", bodyId);
-          }
-          else // bodyStatus == ASTRA_BODY_STATUS_NOT_TRACKING
-          {
-              printf("Body Id: %d Status: Not Tracking\n", bodyId);
-          }
-
-          const astra_vector3f_t* centerOfMass = &body->centerOfMass;
-          const astra_body_tracking_feature_flags_t features = body->features;
-          astra_joint_t* joint;  // AstraSDK/include/astra/capi/streams/body_types.h
-
-          const bool jointTrackingEnabled = 
-            (features & ASTRA_BODY_TRACKING_JOINTS) == ASTRA_BODY_TRACKING_JOINTS;
-          const bool handPoseRecognitionEnabled = 
-            (features & ASTRA_BODY_TRACKING_HAND_POSES) == ASTRA_BODY_TRACKING_HAND_POSES;
-
-          printf("Body %d CenterOfMass (%f, %f, %f)\n",
-              bodyId, centerOfMass->x, centerOfMass->y, centerOfMass->z);
-          printf("    Joint Tracking Enabled: %s     Hand Pose Recognition Enabled: %s\n",
-              jointTrackingEnabled       ? "True" : "False",
-              handPoseRecognitionEnabled ? "True" : "False");
-
-          ///////////////////////////////////////////////////////////////
-          // Publish body tracking information, and display joint info for debug
-
-          // Create structures for ROS Publisher data
-          geometry_msgs::PoseStamped body_pose;
-          body_tracker_msgs::BodyTracker_ <body_tracker_msgs::BodyTracker> skeleton_data;
-
-          // Fill in message data from AstraSDK data
-          // Astra z,x,y coordinates are mapped to ROS x,y,z coordinates 
-          // All values are relative to camera position in meters (ie, in Astra Camera TF frame)
-          // ROS x = Astra z - distance to person
-          // ROS y = Astra x - side to side
-          // ROS z = Astra y - vertical height, *relative to camera position*
-
-          // Basic Pose for person location tracking
-          body_pose.header.frame_id = "astra_camera_link"; // "base_link";
-          body_pose.header.stamp = ros::Time::now();
-
-          // Skeleton Data for publilshing more detail
-
-          // skeleton_data.frame_id = "astra_camera_link"; // "base_link";
-          skeleton_data.body_id = bodyId;
-          skeleton_data.tracking_status = bodyStatus;
-
-          skeleton_data.centerOfMass.x = centerOfMass->z;
-          skeleton_data.centerOfMass.y = centerOfMass->x;
-          skeleton_data.centerOfMass.z = centerOfMass->y;
-
-          joint = &body->joints[ASTRA_JOINT_HEAD];
-          output_joint("Head", bodyId, joint );
-          skeleton_data.joint_position_head.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
-          skeleton_data.joint_position_head.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
-          skeleton_data.joint_position_head.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
-
-          joint = &body->joints[ASTRA_JOINT_NECK];
-          output_joint("Neck", bodyId, joint );
-          skeleton_data.joint_position_neck.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
-          skeleton_data.joint_position_neck.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
-          skeleton_data.joint_position_neck.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
-
-          joint = &body->joints[ASTRA_JOINT_SHOULDER_SPINE];
-          output_joint("Spine Top", bodyId, joint );
-          skeleton_data.joint_position_spine_top.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
-          skeleton_data.joint_position_spine_top.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
-          skeleton_data.joint_position_spine_top.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
-          // THIS IS THE MOST RELIABLE TRACKING POINT, so we use it for Pose!
-          body_pose.pose.position.x = skeleton_data.joint_position_spine_top.x;
-          body_pose.pose.position.y = skeleton_data.joint_position_spine_top.y;
-          body_pose.pose.position.z = skeleton_data.joint_position_spine_top.z;
-
-          joint = &body->joints[ASTRA_JOINT_MID_SPINE];
-          output_joint("Spine Mid", bodyId, joint );
-          skeleton_data.joint_position_spine_mid.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
-          skeleton_data.joint_position_spine_mid.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
-          skeleton_data.joint_position_spine_mid.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
-
-          joint = &body->joints[ASTRA_JOINT_BASE_SPINE];
-          output_joint("Spine Base", bodyId, joint );
-          skeleton_data.joint_position_spine_bottom.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
-          skeleton_data.joint_position_spine_bottom.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
-          skeleton_data.joint_position_spine_bottom.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
-
-          joint = &body->joints[ASTRA_JOINT_LEFT_SHOULDER];
-          output_joint("Left Shoulder", bodyId, joint );
-          skeleton_data.joint_position_left_shoulder.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
-          skeleton_data.joint_position_left_shoulder.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
-          skeleton_data.joint_position_left_shoulder.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
-
-          joint = &body->joints[ASTRA_JOINT_LEFT_ELBOW];
-          output_joint("Left Elbow", bodyId, joint );
-          skeleton_data.joint_position_left_elbow.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
-          skeleton_data.joint_position_left_elbow.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
-          skeleton_data.joint_position_left_elbow.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
-
-          joint = &body->joints[ASTRA_JOINT_LEFT_HAND];
-          output_joint("Left Hand", bodyId, joint );
-          skeleton_data.joint_position_left_hand.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
-          skeleton_data.joint_position_left_hand.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
-          skeleton_data.joint_position_left_hand.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
-
-          joint = &body->joints[ASTRA_JOINT_LEFT_SHOULDER];
-          output_joint("Right Shoulder", bodyId, joint );
-          skeleton_data.joint_position_right_shoulder.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
-          skeleton_data.joint_position_right_shoulder.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
-          skeleton_data.joint_position_right_shoulder.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
-
-          joint = &body->joints[ASTRA_JOINT_LEFT_ELBOW];
-          output_joint("Right Elbow", bodyId, joint );
-          skeleton_data.joint_position_right_elbow.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
-          skeleton_data.joint_position_right_elbow.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
-          skeleton_data.joint_position_right_elbow.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
-
-          joint = &body->joints[ASTRA_JOINT_LEFT_HAND];
-          output_joint("Right Hand", bodyId, joint );
-          skeleton_data.joint_position_right_hand.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
-          skeleton_data.joint_position_right_hand.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
-          skeleton_data.joint_position_right_hand.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
-
-          // Is hand open (0) or grasping (1)?
-          output_hand_poses(body);
-          const astra_handpose_info_t* handPoses = &body->handPoses;
-          // TODO Fix this kludge!
-          skeleton_data.gesture = (handPoses->rightHand + handPoses->leftHand);
-
-          ////////////////////////////////////////////////////
-          // Publish Body Data
-          body_tracking_pose_pub_.publish(body_pose); // this is position only!
-          body_tracking_data_pub_.publish(skeleton_data);
-          ////////////////////////////////////////////////////
-
-
-
-          PublishMarker(
-            2, // ID
-            skeleton_data.centerOfMass.x, // Distance to person = ROS X
-            skeleton_data.centerOfMass.y, // side to side = ROS Y
-            skeleton_data.centerOfMass.z, // Height = ROS Z
-            1.0, 0.0, 1.0 ); // r,g,b
-
-          PublishMarker(
-            3, // ID
-            skeleton_data.joint_position_head.x,
-            skeleton_data.joint_position_head.y,
-            skeleton_data.joint_position_head.z,
-            0.7, 0.7, 0.7 ); // r,g,b
-
-          PublishMarker(
-            4, // ID
-            skeleton_data.joint_position_spine_top.x,
-            skeleton_data.joint_position_spine_top.y,
-            skeleton_data.joint_position_spine_top.z,
-            0.0, 0.0, 1.0 ); // r,g,b
-
-          PublishMarker(
-            5, // ID
-            skeleton_data.joint_position_spine_mid.x,
-            skeleton_data.joint_position_spine_mid.y,
-            skeleton_data.joint_position_spine_mid.z,
-            0.0, 1.0, 0.0 ); // r,g,b
-
-          PublishMarker(
-            6, // ID
-            skeleton_data.joint_position_spine_bottom.x,
-            skeleton_data.joint_position_spine_bottom.y,
-            skeleton_data.joint_position_spine_bottom.z,
-            1.0, 0.0, 0.0 ); // r,g,b
-
-          printf("SPINE TOP: x=%3.0f, y=%3.0f, z=%3.0f inches\n",
-            skeleton_data.joint_position_spine_top.x * 39.3,
-            skeleton_data.joint_position_spine_top.y * 39.3,
-            skeleton_data.joint_position_spine_top.z * 39.3);
-
-          printf("----------------------------\n\n");
-
+        ROS_INFO("%s: detected person ID %d", _name.c_str(), bodyId);
+        last_id_ = bodyId;
       }
+
+      /*
+      brief Depth ("projective") position of joint 
+      astra_vector2f_t depthPosition;
+      \brief Real world position of joint 
+      astra_vector3f_t worldPosition;
+      */
+
+      ///////////////////////////////////////////////////////////////
+      // 2D position for camera servo tracking
+      const float ASTRA_MINI_FOV_X = 1.047200; // (60 degrees horizontal)
+      const float ASTRA_MINI_FOV_Y = -0.863938; // (49.5 degrees vertical)
+
+      // Convert projection to radians
+      // Astra proj is 0.0 (right) --> 0.628 (left)
+      //           and 0.0 (top)   --> 0.628 (botom)
+      // NOTE: TUNE THESE VALUSE AS NEEDED FOR YOUR CAMERA AND APPLICATION!
+
+      joint = &body->joints[KEY_JOINT_TO_TRACK];
+      float projection_x = ((astra_vector2f_t*)&joint->depthPosition)->x / 1000.0;
+      float projection_y = ((astra_vector2f_t*)&joint->depthPosition)->y / 1000.0;
+      position_data.position2d.x = (projection_x - 0.314) * ASTRA_MINI_FOV_X;
+      position_data.position2d.y = (projection_y - 0.314) * ASTRA_MINI_FOV_Y;
+      position_data.position2d.z = 0.0;
+
+      std::cout << std::setprecision(4) << std::setw(7) 
+        << "Astra: " << "2D Tracking for ID "
+        << bodyId << " :  "  
+        << " px: " << projection_x 
+        << " py: " << projection_y
+        << std::endl;
+
+      std::cout << std::setprecision(4) << std::setw(7) 
+        << " x: " << position_data.position2d.x 
+        << " y: " << position_data.position2d.y
+        << " z: " << position_data.position2d.z
+        << std::endl;
+
+
+      ///////////////////////////////////////////////////////////////
+      // 3D position of person
+
+      // *** POSITION 3D ***
+      // THIS IS THE MOST RELIABLE TRACKING POINT, so we use it for person position in 3D!
+      joint = &body->joints[KEY_JOINT_TO_TRACK];
+      position_data.position3d.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
+      position_data.position3d.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
+      position_data.position3d.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
+
+
+      ///////////////////////////////////////////////////////////////
+      // Skeleton data - published in skeleton message
+
+      /// skeleton_data.frame_id = "astra_camera_link"; // "base_link";
+      skeleton_data.body_id = bodyId;
+      skeleton_data.tracking_status = bodyStatus;
+
+      /// TODO skeleton_data.centerOfMass.x = centerOfMass->z;
+      /// skeleton_data.centerOfMass.y = centerOfMass->x;
+      /// skeleton_data.centerOfMass.z = centerOfMass->y;
+
+
+      joint = &body->joints[ASTRA_JOINT_HEAD];
+      output_joint("Head", bodyId, joint );
+      skeleton_data.joint_position_head.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
+      skeleton_data.joint_position_head.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
+      skeleton_data.joint_position_head.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
+
+      joint = &body->joints[ASTRA_JOINT_NECK];
+      output_joint("Neck", bodyId, joint );
+      skeleton_data.joint_position_neck.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
+      skeleton_data.joint_position_neck.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
+      skeleton_data.joint_position_neck.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
+
+      joint = &body->joints[ASTRA_JOINT_SHOULDER_SPINE];
+      output_joint("Spine Top", bodyId, joint );
+      skeleton_data.joint_position_spine_top.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
+      skeleton_data.joint_position_spine_top.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
+      skeleton_data.joint_position_spine_top.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
+
+      joint = &body->joints[ASTRA_JOINT_MID_SPINE];
+      output_joint("Spine Mid", bodyId, joint );
+      skeleton_data.joint_position_spine_mid.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
+      skeleton_data.joint_position_spine_mid.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
+      skeleton_data.joint_position_spine_mid.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
+
+      joint = &body->joints[ASTRA_JOINT_BASE_SPINE];
+      output_joint("Spine Base", bodyId, joint );
+      skeleton_data.joint_position_spine_bottom.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
+      skeleton_data.joint_position_spine_bottom.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
+      skeleton_data.joint_position_spine_bottom.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
+
+      joint = &body->joints[ASTRA_JOINT_LEFT_SHOULDER];
+      output_joint("Left Shoulder", bodyId, joint );
+      skeleton_data.joint_position_left_shoulder.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
+      skeleton_data.joint_position_left_shoulder.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
+      skeleton_data.joint_position_left_shoulder.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
+
+      joint = &body->joints[ASTRA_JOINT_LEFT_ELBOW];
+      output_joint("Left Elbow", bodyId, joint );
+      skeleton_data.joint_position_left_elbow.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
+      skeleton_data.joint_position_left_elbow.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
+      skeleton_data.joint_position_left_elbow.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
+
+      joint = &body->joints[ASTRA_JOINT_LEFT_HAND];
+      output_joint("Left Hand", bodyId, joint );
+      skeleton_data.joint_position_left_hand.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
+      skeleton_data.joint_position_left_hand.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
+      skeleton_data.joint_position_left_hand.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
+
+      joint = &body->joints[ASTRA_JOINT_LEFT_SHOULDER];
+      output_joint("Right Shoulder", bodyId, joint );
+      skeleton_data.joint_position_right_shoulder.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
+      skeleton_data.joint_position_right_shoulder.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
+      skeleton_data.joint_position_right_shoulder.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
+
+      joint = &body->joints[ASTRA_JOINT_LEFT_ELBOW];
+      output_joint("Right Elbow", bodyId, joint );
+      skeleton_data.joint_position_right_elbow.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
+      skeleton_data.joint_position_right_elbow.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
+      skeleton_data.joint_position_right_elbow.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
+
+      joint = &body->joints[ASTRA_JOINT_LEFT_HAND];
+      output_joint("Right Hand", bodyId, joint );
+      skeleton_data.joint_position_right_hand.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
+      skeleton_data.joint_position_right_hand.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
+      skeleton_data.joint_position_right_hand.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
+
+      // Is hand open (0) or grasping (1)?
+      output_hand_poses(body);
+      const astra_handpose_info_t* handPoses = &body->handPoses;
+      // TODO Fix this kludge!
+      skeleton_data.gesture = (handPoses->rightHand + handPoses->leftHand);
+
+      ////////////////////////////////////////////////////
+      // Publish Body Data
+      body_tracking_position_pub_.publish(position_data); // position data
+      body_tracking_skeleton_pub_.publish(skeleton_data); // full skeleton data
+
+
+      PublishMarker(
+        2, // ID
+        skeleton_data.centerOfMass.x, // Distance to person = ROS X
+        skeleton_data.centerOfMass.y, // side to side = ROS Y
+        skeleton_data.centerOfMass.z, // Height = ROS Z
+        1.0, 0.0, 1.0 ); // r,g,b
+
+      PublishMarker(
+        3, // ID
+        skeleton_data.joint_position_head.x,
+        skeleton_data.joint_position_head.y,
+        skeleton_data.joint_position_head.z,
+        0.7, 0.7, 0.7 ); // r,g,b
+
+      PublishMarker(
+        4, // ID
+        skeleton_data.joint_position_spine_top.x,
+        skeleton_data.joint_position_spine_top.y,
+        skeleton_data.joint_position_spine_top.z,
+        0.0, 0.0, 1.0 ); // r,g,b
+
+      PublishMarker(
+        5, // ID
+        skeleton_data.joint_position_spine_mid.x,
+        skeleton_data.joint_position_spine_mid.y,
+        skeleton_data.joint_position_spine_mid.z,
+        0.0, 1.0, 0.0 ); // r,g,b
+
+      PublishMarker(
+        6, // ID
+        skeleton_data.joint_position_spine_bottom.x,
+        skeleton_data.joint_position_spine_bottom.y,
+        skeleton_data.joint_position_spine_bottom.z,
+        1.0, 0.0, 0.0 ); // r,g,b
+
+      printf("SPINE TOP: x=%3.0f, y=%3.0f, z=%3.0f inches\n",
+        skeleton_data.joint_position_spine_top.x * 39.3,
+        skeleton_data.joint_position_spine_top.y * 39.3,
+        skeleton_data.joint_position_spine_top.z * 39.3);
+
+      printf("----------------------------\n\n");
+
+    } // for each body seen
+
   }
 
   void PublishMarker(int id, float x, float y, float z, float color_r, float color_g, float color_b)
@@ -458,70 +556,70 @@ public:
 
   void output_bodyframe(astra_bodyframe_t bodyFrame)
   {
-      output_floor(bodyFrame);
+    output_floor(bodyFrame);
 
-      output_body_mask(bodyFrame);
+    output_body_mask(bodyFrame);
 
-      output_bodyframe_info(bodyFrame);
+    output_bodyframe_info(bodyFrame);
 
-      output_bodies(bodyFrame);
+    output_bodies(bodyFrame);
   }
 
   void runLoop()
   {
-      set_key_handler();
-      astra_initialize();
-      const char* licenseString = "<INSERT LICENSE KEY HERE>";
-      orbbec_body_tracking_set_license(licenseString);
+    set_key_handler();
+    astra_initialize();
+    const char* licenseString = "<INSERT LICENSE KEY HERE>";
+    orbbec_body_tracking_set_license(licenseString);
 
-      astra_streamsetconnection_t sensor;
-      astra_streamset_open("device/default", &sensor);
+    astra_streamsetconnection_t sensor;
+    astra_streamset_open("device/default", &sensor);
 
-      astra_reader_t reader;
-      astra_reader_create(sensor, &reader);
+    astra_reader_t reader;
+    astra_reader_create(sensor, &reader);
 
-      astra_bodystream_t bodyStream;
-      astra_reader_get_bodystream(reader, &bodyStream);
+    astra_bodystream_t bodyStream;
+    astra_reader_get_bodystream(reader, &bodyStream);
 
-      astra_stream_start(bodyStream);
+    astra_stream_start(bodyStream);
 
-      do
+    do
+    {
+      astra_update();
+
+      astra_reader_frame_t frame;
+      astra_status_t rc = astra_reader_open_frame(reader, 0, &frame);
+
+      if (rc == ASTRA_STATUS_SUCCESS)
       {
-          astra_update();
+        astra_bodyframe_t bodyFrame;
+        astra_frame_get_bodyframe(frame, &bodyFrame);
 
-          astra_reader_frame_t frame;
-          astra_status_t rc = astra_reader_open_frame(reader, 0, &frame);
+        astra_frame_index_t frameIndex;
+        astra_bodyframe_get_frameindex(bodyFrame, &frameIndex);
+        // printf("Frame index: %d\n", frameIndex);
 
-          if (rc == ASTRA_STATUS_SUCCESS)
-          {
-              astra_bodyframe_t bodyFrame;
-              astra_frame_get_bodyframe(frame, &bodyFrame);
+        output_bodyframe(bodyFrame);
 
-              astra_frame_index_t frameIndex;
-              astra_bodyframe_get_frameindex(bodyFrame, &frameIndex);
-              // printf("Frame index: %d\n", frameIndex);
+        //printf("----------------------------\n");
 
-              output_bodyframe(bodyFrame);
+        astra_reader_close_frame(&frame);
+      }
 
-              //printf("----------------------------\n");
+      /*
+      PublishMarker(  // DEBUG
+        1,            // ID
+        0.2,0.0,0.8,  // x,y,z
+        1.0, 0.0, 1.0 ); // r,g,b
+      */
+      ros::spinOnce();  // ROS
 
-              astra_reader_close_frame(&frame);
-          }
+    } while (shouldContinue);
 
-  /*
-          PublishMarker(  // DEBUG
-            1,            // ID
-            0.2,0.0,0.8,  // x,y,z
-            1.0, 0.0, 1.0 ); // r,g,b
-  */
-          ros::spinOnce();  // ROS
+    astra_reader_destroy(&reader);
+    astra_streamset_close(&sensor);
 
-      } while (shouldContinue);
-
-      astra_reader_destroy(&reader);
-      astra_streamset_close(&sensor);
-
-      astra_terminate();
+    astra_terminate();
 
   }
 
@@ -533,10 +631,11 @@ private:
   ros::NodeHandle nh_;
   //ros::Subscriber robot_behavior_state_;
   std::string myparm1_;
+  int last_id_;
 
   //ros::Publisher body_tracking_status_pub_;
-  ros::Publisher body_tracking_pose_pub_;
-  ros::Publisher body_tracking_data_pub_;
+  ros::Publisher body_tracking_position_pub_;
+  ros::Publisher body_tracking_skeleton_pub_;
   ros::Publisher marker_pub_;
 
 };
@@ -552,6 +651,5 @@ int main( int argc, char *argv[] )
 
   return 0;
 }
-
 
 
