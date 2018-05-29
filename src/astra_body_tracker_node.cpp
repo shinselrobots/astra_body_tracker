@@ -519,6 +519,7 @@ public:
     visualization_msgs::Marker marker;
     marker.header.frame_id = "astra_camera_link"; // "base_link";
     marker.header.stamp = ros::Time::now();
+    marker.lifetime = ros::Duration(1.0); // seconds
 
     // Any marker sent with the same namespace and id will overwrite the old one
     marker.ns = "astra_body_tracker";
