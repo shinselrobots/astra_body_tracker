@@ -4,8 +4,8 @@
   <version>0.0.0</version>
   <description>a body_tracker package for Orbbec Astra SDK</description>
   <maintainer email="shinsel.robots@gmail.com">Dave Shinsel</maintainer>
-  <license>TODO</license>
-  <!-- <author email="jane.doe@example.com">Jane Doe</author> -->
+  <license>BSD License, but some code copied from Orbbec Astra SDK; see Astra SDK for licensing</license>
+  <author email="shinsel.robots@gmail.com">Dave Shinsel</author> -->
 
 
   <!-- The *depend tags are used to specify dependencies -->

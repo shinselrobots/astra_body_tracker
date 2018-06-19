@@ -59,6 +59,9 @@
       individuals by ID, and ignore other ID's that are picked up (they may be bogus).
       I find it useful to use the Gesture to indicate which person in a scene is the correct person to track.
       
+# Licensing
+    - Code written by me is provided under BSD license
+    - This package uses sample code from the Astra SDK, provided by Orbbec.  See Orbbec Astra SDK for licensing.
 
 
 
