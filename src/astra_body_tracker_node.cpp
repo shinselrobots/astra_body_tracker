@@ -425,19 +425,19 @@ public:
       skeleton_data.joint_position_left_hand.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
       skeleton_data.joint_position_left_hand.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
 
-      joint = &body->joints[ASTRA_JOINT_LEFT_SHOULDER];
+      joint = &body->joints[ASTRA_JOINT_RIGHT_SHOULDER];
       output_joint("Right Shoulder", bodyId, joint );
       skeleton_data.joint_position_right_shoulder.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
       skeleton_data.joint_position_right_shoulder.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
       skeleton_data.joint_position_right_shoulder.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
 
-      joint = &body->joints[ASTRA_JOINT_LEFT_ELBOW];
+      joint = &body->joints[ASTRA_JOINT_RIGHT_ELBOW];
       output_joint("Right Elbow", bodyId, joint );
       skeleton_data.joint_position_right_elbow.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
       skeleton_data.joint_position_right_elbow.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
       skeleton_data.joint_position_right_elbow.z = ((astra_vector3f_t*)&joint->worldPosition)->y / 1000.0;
 
-      joint = &body->joints[ASTRA_JOINT_LEFT_HAND];
+      joint = &body->joints[ASTRA_JOINT_RIGHT_HAND];
       output_joint("Right Hand", bodyId, joint );
       skeleton_data.joint_position_right_hand.x = ((astra_vector3f_t*)&joint->worldPosition)->z / 1000.0;
       skeleton_data.joint_position_right_hand.y = ((astra_vector3f_t*)&joint->worldPosition)->x / 1000.0;
