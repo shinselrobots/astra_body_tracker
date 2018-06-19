@@ -206,7 +206,7 @@ public:
 
     // orientation is a 3x3 rotation matrix where the column vectors also
     // represent the orthogonal basis vectors for the x, y, and z axes.
-    /* Not sure I need orientation for anything yet
+    /* Not sure I need orientation for anything yet, or how well this works...
     const astra_matrix3x3_t* orientation = &joint->orientation;
     const astra_vector3f_t* xAxis = &orientation->xAxis; // same as orientation->m00, m10, m20
     const astra_vector3f_t* yAxis = &orientation->yAxis; // same as orientation->m01, m11, m21
@@ -322,12 +322,6 @@ public:
         last_id_ = bodyId;
       }
 
-      /*
-      brief Depth ("projective") position of joint 
-      astra_vector2f_t depthPosition;
-      \brief Real world position of joint 
-      astra_vector3f_t worldPosition;
-      */
 
       ///////////////////////////////////////////////////////////////
       // 2D position for camera servo tracking
@@ -452,11 +446,11 @@ public:
       // Is hand open (0) or grasping (1)?
       output_hand_poses(body);
       const astra_handpose_info_t* handPoses = &body->handPoses;
-      // TODO Fix this kludge!
+      // We just publish "1" if either hand has any gesture detected
       skeleton_data.gesture = (handPoses->rightHand + handPoses->leftHand);
 
       ////////////////////////////////////////////////////
-      // Publish Body Data
+      // Publish everything
       body_tracking_position_pub_.publish(position_data); // position data
       body_tracking_skeleton_pub_.publish(skeleton_data); // full skeleton data
 
@@ -553,8 +547,6 @@ public:
 
   }
 
-
-
   void output_bodyframe(astra_bodyframe_t bodyFrame)
   {
     output_floor(bodyFrame);
@@ -607,12 +599,6 @@ public:
         astra_reader_close_frame(&frame);
       }
 
-      /*
-      PublishMarker(  // DEBUG
-        1,            // ID
-        0.2,0.0,0.8,  // x,y,z
-        1.0, 0.0, 1.0 ); // r,g,b
-      */
       ros::spinOnce();  // ROS
 
     } while (shouldContinue);
@@ -630,11 +616,9 @@ private:
 
   std::string _name;
   ros::NodeHandle nh_;
-  //ros::Subscriber robot_behavior_state_;
   std::string myparm1_;
   int last_id_;
 
-  //ros::Publisher body_tracking_status_pub_;
   ros::Publisher body_tracking_position_pub_;
   ros::Publisher body_tracking_skeleton_pub_;
   ros::Publisher marker_pub_;
